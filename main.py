@@ -15,72 +15,94 @@ intents.message_content = True
 class XSpecificBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
-        # 監視情報を保持する変数
-        self.target_x_id = None
+        # 監視情報を辞書で管理 { "ユーザーID": "最新投稿ID" }
+        self.target_accounts = {} 
         self.target_channel_id = None
-        self.last_status_id = None
 
     async def setup_hook(self):
-        # ここで self. をつけて呼び出すので、下の関数もクラスの中に必要
         self.check_x_task.start()
         await self.tree.sync()
 
     # --- 2. X（ミラーサイトRSS）監視ロジック ---
-    # クラスの中に入れたので、第一引数に「self」を追加するよ
     @tasks.loop(minutes=3) 
-    async def check_x_task(self): # ← self を追加
-        if not self.target_x_id or not self.target_channel_id:
+    async def check_x_task(self):
+        if not self.target_accounts or not self.target_channel_id:
             return
 
         instances = ["nitter.net", "nitter.cz", "nitter.privacydev.net"]
         
         async with aiohttp.ClientSession() as session:
-            for instance in instances:
-                rss_url = f"https://{instance}/{self.target_x_id}/rss"
-                try:
-                    async with session.get(rss_url, timeout=10) as resp:
-                        if resp.status == 200:
-                            content = await resp.text()
-                            match = re.search(r'status/(\d+)', content)
-                            if match:
-                                current_id = match.group(1)
-                                
-                                if self.last_status_id is None:
-                                    self.last_status_id = current_id
-                                    break
-                                
-                                if current_id != self.last_status_id:
-                                    channel = self.get_channel(self.target_channel_id)
-                                    if channel:
-                                        tweet_url = f"https://x.com/{self.target_x_id}/status/{current_id}"
-                                        await channel.send(f"🌟 **@{self.target_x_id} さんの新しい投稿！**\n{tweet_url}")
-                                    self.last_status_id = current_id
-                            break 
-                except:
-                    continue 
+            # 登録されているすべてのアカウントをループで確認
+            for x_id, last_id in self.target_accounts.items():
+                success = False
+                for instance in instances:
+                    rss_url = f"https://{instance}/{x_id}/rss"
+                    try:
+                        async with session.get(rss_url, timeout=10) as resp:
+                            if resp.status == 200:
+                                content = await resp.text()
+                                match = re.search(r'status/(\d+)', content)
+                                if match:
+                                    current_id = match.group(1)
+                                    
+                                    # 初回取得時
+                                    if last_id is None:
+                                        self.target_accounts[x_id] = current_id
+                                        success = True
+                                        break
+                                    
+                                    # 新しい投稿がある場合
+                                    if current_id != last_id:
+                                        channel = self.get_channel(self.target_channel_id)
+                                        if channel:
+                                            tweet_url = f"https://x.com/{x_id}/status/{current_id}"
+                                            await channel.send(f"🌟 **@{x_id} さんの新しい投稿！**\n{tweet_url}")
+                                        self.target_accounts[x_id] = current_id
+                                    success = True
+                                break 
+                    except:
+                        continue
+                if not success:
+                    print(f"Failed to fetch updates for @{x_id}")
 
 # クラスの外でBotを起動
 bot = XSpecificBot()
 
 # --- 3. 管理用コマンド ---
-@bot.tree.command(name="x_setup", description="監視するアカウントとチャンネルをセットするよ")
-@app_commands.describe(user_id="監視したいXのID（@なし）", channel="通知を送るチャンネル")
+
+@bot.tree.command(name="x_add", description="監視するアカウントを追加するよ")
+@app_commands.describe(user_id="追加したいXのID（@なし）", channel="通知を送るチャンネル（一括設定）")
 @app_commands.checks.has_permissions(administrator=True)
-async def x_setup(it: discord.Interaction, user_id: str, channel: discord.TextChannel):
-    # bot経由でクラス内の変数にアクセス
-    bot.target_x_id = user_id
+async def x_add(it: discord.Interaction, user_id: str, channel: discord.TextChannel):
+    # チャンネルを設定（共通）
     bot.target_channel_id = channel.id
-    bot.last_status_id = None 
+    # アカウントをリストに追加（まだなければNoneで初期化）
+    if user_id not in bot.target_accounts:
+        bot.target_accounts[user_id] = None
+        msg = f"✅ @{user_id} を監視リストに追加したよ！\n通知は {channel.mention} に送るね。"
+    else:
+        msg = f"⚠️ @{user_id} はもうリストに入っているよ！"
     
-    await it.response.send_message(
-        f"✅ 設定したよ！\nこれからは {channel.mention} で **@{user_id}** さんを監視するね！",
-        ephemeral=True
-    )
+    await it.response.send_message(msg, ephemeral=True)
+
+@bot.tree.command(name="x_list", description="今監視しているアカウントを表示するよ")
+async def x_list(it: discord.Interaction):
+    if not bot.target_accounts:
+        return await it.response.send_message("❌ 監視中のアカウントはないよ。", ephemeral=True)
+    
+    account_list = "\n".join([f"・@{uid}" for uid in bot.target_accounts.keys()])
+    await it.response.send_message(f"📋 **現在監視中のアカウント:**\n{account_list}", ephemeral=True)
+
+@bot.tree.command(name="x_clear", description="監視リストを空にするよ")
+@app_commands.checks.has_permissions(administrator=True)
+async def x_clear(it: discord.Interaction):
+    bot.target_accounts = {}
+    await it.response.send_message("🧹 監視リストをきれいにしたよ！", ephemeral=True)
 
 @bot.event
 async def on_ready():
     print(f"Logged in: {bot.user.name}")
-    activity = discord.Activity(type=discord.ActivityType.watching, name="X (Twitter)")
+    activity = discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.target_accounts)}個のアカウント")
     await bot.change_presence(activity=activity)
 
 # --- 4. 実行 ---
