@@ -20,7 +20,9 @@ class XSpecificBot(commands.Bot):
         self.target_channel_id = None
 
     async def setup_hook(self):
+        # 監視タスクを開始
         self.check_x_task.start()
+        # スラッシュコマンドを同期
         await self.tree.sync()
 
     # --- 2. X（ミラーサイトRSS）監視ロジック ---
@@ -29,6 +31,7 @@ class XSpecificBot(commands.Bot):
         if not self.target_accounts or not self.target_channel_id:
             return
 
+        # ミラーサイトのリスト（安定性を高めるために複数用意）
         instances = ["nitter.net", "nitter.cz", "nitter.privacydev.net"]
         
         async with aiohttp.ClientSession() as session:
@@ -41,22 +44,24 @@ class XSpecificBot(commands.Bot):
                         async with session.get(rss_url, timeout=10) as resp:
                             if resp.status == 200:
                                 content = await resp.text()
+                                # 最新の投稿ID（status/数字）を抽出
                                 match = re.search(r'status/(\d+)', content)
                                 if match:
                                     current_id = match.group(1)
                                     
-                                    # 初回取得時
+                                    # 初回取得時は保存のみ（過去分の一斉通知防止）
                                     if last_id is None:
                                         self.target_accounts[x_id] = current_id
                                         success = True
                                         break
                                     
-                                    # 新しい投稿がある場合
+                                    # 新しい投稿（リポスト含む）が見つかった場合
                                     if current_id != last_id:
                                         channel = self.get_channel(self.target_channel_id)
                                         if channel:
                                             tweet_url = f"https://x.com/{x_id}/status/{current_id}"
-                                            await channel.send(f"🌟 **@{x_id} さんの新しい投稿！**\n{tweet_url}")
+                                            # お知らせワドルディのメッセージ！
+                                            await channel.send(f"📢 **お知らせわにゃ！**\n**@{x_id}** さんが新しくポストしたよ！\n{tweet_url}")
                                         self.target_accounts[x_id] = current_id
                                     success = True
                                 break 
@@ -71,15 +76,19 @@ bot = XSpecificBot()
 # --- 3. 管理用コマンド ---
 
 @bot.tree.command(name="x_add", description="監視するアカウントを追加するよ")
-@app_commands.describe(user_id="追加したいXのID（@なし）", channel="通知を送るチャンネル（一括設定）")
+@app_commands.describe(user_id="追加したいXのID（@なし）", channel="通知を送るチャンネル")
 @app_commands.checks.has_permissions(administrator=True)
 async def x_add(it: discord.Interaction, user_id: str, channel: discord.TextChannel):
-    # チャンネルを設定（共通）
     bot.target_channel_id = channel.id
-    # アカウントをリストに追加（まだなければNoneで初期化）
+    
     if user_id not in bot.target_accounts:
         bot.target_accounts[user_id] = None
-        msg = f"✅ @{user_id} を監視リストに追加したよ！\n通知は {channel.mention} に送るね。"
+        msg = f"✅ わにゃっ！ **@{user_id}** さんのお知らせを届ける準備ができたよ！"
+        
+        # ステータスをお知らせ活動風に更新
+        count = len(bot.target_accounts)
+        activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count}人の最新ニュース")
+        await bot.change_presence(activity=activity)
     else:
         msg = f"⚠️ @{user_id} はもうリストに入っているよ！"
     
@@ -88,21 +97,22 @@ async def x_add(it: discord.Interaction, user_id: str, channel: discord.TextChan
 @bot.tree.command(name="x_list", description="今監視しているアカウントを表示するよ")
 async def x_list(it: discord.Interaction):
     if not bot.target_accounts:
-        return await it.response.send_message("❌ 監視中のアカウントはないよ。", ephemeral=True)
+        return await it.response.send_message("❌ 監視中のアカウントはないわにゃ。", ephemeral=True)
     
     account_list = "\n".join([f"・@{uid}" for uid in bot.target_accounts.keys()])
-    await it.response.send_message(f"📋 **現在監視中のアカウント:**\n{account_list}", ephemeral=True)
+    await it.response.send_message(f"📋 **現在監視中のリストわにゃ:**\n{account_list}", ephemeral=True)
 
 @bot.tree.command(name="x_clear", description="監視リストを空にするよ")
 @app_commands.checks.has_permissions(administrator=True)
 async def x_clear(it: discord.Interaction):
     bot.target_accounts = {}
-    await it.response.send_message("🧹 監視リストをきれいにしたよ！", ephemeral=True)
+    await it.response.send_message("🧹 監視リストをきれいにしたよ！また教えてね。", ephemeral=True)
 
 @bot.event
 async def on_ready():
-    print(f"Logged in: {bot.user.name}")
-    activity = discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.target_accounts)}個のアカウント")
+    print(f"Logged in: {bot.user.name} (お知らせワドルディ起動！)")
+    count = len(bot.target_accounts)
+    activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count}人の最新ニュース")
     await bot.change_presence(activity=activity)
 
 # --- 4. 実行 ---
