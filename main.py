@@ -40,7 +40,6 @@ class XSpecificBot(commands.Bot):
             for x_id, last_id in self.target_accounts.items():
                 success = False
                 for instance in instances:
-                    # 【変更点】リポストや返信をRSSに含めるためのパラメータを付与したわにゃ！
                     rss_url = f"https://{instance}/{x_id}/rss?include_replies=on"
                     try:
                         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
@@ -61,7 +60,8 @@ class XSpecificBot(commands.Bot):
                                         channel = self.get_channel(self.target_channel_id)
                                         if channel:
                                             tweet_url = f"https://x.com/{x_id}/status/{current_id}"
-                                            await channel.send(f"📢 **お知らせわにゃ！**\n**@{x_id}** さんが新しくポスト（またはリポスト）したよ！\n{tweet_url}")
+                                            # 指示通りメッセージを削除
+                                            await channel.send(tweet_url)
                                         self.target_accounts[x_id] = current_id
                                     success = True
                                 break 
@@ -76,7 +76,7 @@ bot = XSpecificBot()
 # --- 3. 管理用コマンド ---
 
 @bot.tree.command(name="x_add", description="監視するアカウントを追加するよ")
-@app_commands.describe(user_id="追加したいXのID（@なし）")
+@app_commands.describe(user_id="追加したいX의 ID（@なし）")
 @app_commands.checks.has_permissions(administrator=True)
 async def x_add(it: discord.Interaction, user_id: str):
     await it.response.defer(ephemeral=True)
@@ -109,7 +109,7 @@ async def on_ready():
     if not bot.booted:
         channel = bot.get_channel(bot.target_channel_id)
         if channel:
-            await channel.send("📢 **お知らせワドルディ、リポストもパトロールするよ！**\n準備完了だわにゃ！")
+            await channel.send("📢 **お知らせワドルディ、起動したわにゃ！**")
         bot.booted = True
     count = len(bot.target_accounts)
     activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count}人の最新ニュース")
