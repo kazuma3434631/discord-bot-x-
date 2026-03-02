@@ -4,7 +4,6 @@ from discord import app_commands
 import os
 import re
 import aiohttp
-import asyncio
 from keep_alive import keep_alive
 
 # --- 1. 初期設定 ---
@@ -14,12 +13,16 @@ intents.message_content = True
 class XSpecificBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
+        # 監視情報を辞書で管理 { "ユーザーID": "最新投稿ID" }
         self.target_accounts = {} 
-        self.target_channel_id = None
-        self.booted = False # 起動メッセージを1回だけ送るためのフラグ
+        # 指定されたチャンネルIDを固定
+        self.target_channel_id = 1416241884300443750
+        self.booted = False
 
     async def setup_hook(self):
+        # 監視タスクを開始
         self.check_x_task.start()
+        # スラッシュコマンドを同期
         await self.tree.sync()
 
     # --- 2. X（ミラーサイトRSS）監視ロジック ---
@@ -28,6 +31,7 @@ class XSpecificBot(commands.Bot):
         if not self.target_accounts or not self.target_channel_id:
             return
 
+        # 安定性の高いミラーサイト（インスタンス）のリスト
         instances = [
             "nitter.net", 
             "nitter.cz",
@@ -51,12 +55,14 @@ class XSpecificBot(commands.Bot):
                                 if match:
                                     current_id = match.group(1)
                                     
+                                    # 初回取得時は保存のみ（過去分の一斉通知防止）
                                     if last_id is None:
                                         print(f"📦 @{x_id} の初期IDを確認したわにゃ！")
                                         self.target_accounts[x_id] = current_id
                                         success = True
                                         break
                                     
+                                    # 新しい投稿が見つかった場合
                                     if current_id != last_id:
                                         channel = self.get_channel(self.target_channel_id)
                                         if channel:
@@ -68,7 +74,7 @@ class XSpecificBot(commands.Bot):
                     except:
                         continue
                 if not success:
-                    print(f"⚠️ @{x_id} の情報が取得できなかったわにゃ。")
+                    print(f"⚠️ @{x_id} の情報がどのサイトからも取得できなかったわにゃ。")
 
 # クラスの外でBotを起動
 bot = XSpecificBot()
@@ -76,13 +82,12 @@ bot = XSpecificBot()
 # --- 3. 管理用コマンド ---
 
 @bot.tree.command(name="x_add", description="監視するアカウントを追加するよ")
-@app_commands.describe(user_id="追加したいXのID（@なし）", channel="通知を送るチャンネル")
+@app_commands.describe(user_id="追加したいXのID（@なし）")
 @app_commands.checks.has_permissions(administrator=True)
-async def x_add(it: discord.Interaction, user_id: str, channel: discord.TextChannel):
-    # 待ち時間を回避する defer を追加！
+async def x_add(it: discord.Interaction, user_id: str):
+    # 待ち時間を回避する defer
     await it.response.defer(ephemeral=True)
     
-    bot.target_channel_id = channel.id
     if user_id not in bot.target_accounts:
         bot.target_accounts[user_id] = None
         msg = f"✅ わにゃっ！ **@{user_id}** さんのお知らせを届ける準備ができたよ！"
@@ -95,19 +100,30 @@ async def x_add(it: discord.Interaction, user_id: str, channel: discord.TextChan
     
     await it.followup.send(msg, ephemeral=True)
 
+@bot.tree.command(name="x_list", description="今監視しているアカウントを表示するよ")
+async def x_list(it: discord.Interaction):
+    if not bot.target_accounts:
+        return await it.response.send_message("❌ 監視中のアカウントはないわにゃ。", ephemeral=True)
+    
+    account_list = "\n".join([f"・@{uid}" for uid in bot.target_accounts.keys()])
+    await it.response.send_message(f"📋 **現在監視中のリストわにゃ:**\n{account_list}", ephemeral=True)
+
+@bot.tree.command(name="x_clear", description="監視リストを空にするよ")
+@app_commands.checks.has_permissions(administrator=True)
+async def x_clear(it: discord.Interaction):
+    bot.target_accounts = {}
+    await it.response.send_message("🧹 監視リストをきれいにしたよ！", ephemeral=True)
+
 @bot.event
 async def on_ready():
-    print(f"Logged in: {bot.user.name}")
+    print(f"Logged in: {bot.user.name} (お知らせワドルディ)")
     
-    # --- 起動メッセージ機能 ---
+    # 起動メッセージを特定のチャンネルに送信
     if not bot.booted:
-        # 最後に登録されたチャンネルがあれば、そこに挨拶を送るわにゃ
-        if bot.target_channel_id:
-            channel = bot.get_channel(bot.target_channel_id)
-            if channel:
-                await channel.send("📢 **お知らせワドルディ、起動したわにゃ！**\nパトロールを始めるよ。よろしくね！")
-        
-        bot.booted = True # 重複送信防止
+        channel = bot.get_channel(bot.target_channel_id)
+        if channel:
+            await channel.send("📢 **お知らせワドルディ、起動したわにゃ！**\nパトロールを始めるよ。ここにお知らせを届けるね！")
+        bot.booted = True
 
     count = len(bot.target_accounts)
     activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count}人の最新ニュース")
