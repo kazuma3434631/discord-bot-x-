@@ -14,7 +14,10 @@ class XSpecificBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
         self.target_accounts = {} 
-        self.target_channel_id = 1416241884300443750
+        # お知らせ通知用チャンネル
+        self.target_channel_id = 1475873866093170749
+        # 起動メッセージ用チャンネル
+        self.boot_msg_channel_id = 1475867868724854814
         self.booted = False
 
     async def setup_hook(self):
@@ -60,7 +63,7 @@ class XSpecificBot(commands.Bot):
                                         channel = self.get_channel(self.target_channel_id)
                                         if channel:
                                             tweet_url = f"https://x.com/{x_id}/status/{current_id}"
-                                            # 指示通りメッセージを削除
+                                            # URLのみ送信
                                             await channel.send(tweet_url)
                                         self.target_accounts[x_id] = current_id
                                     success = True
@@ -73,10 +76,10 @@ class XSpecificBot(commands.Bot):
 # クラスの外でBotを起動
 bot = XSpecificBot()
 
-# --- 3. 管理用コマンド ---
+# --- 3. 管理用コマンド（すべて管理者限定） ---
 
-@bot.tree.command(name="x_add", description="監視するアカウントを追加するよ")
-@app_commands.describe(user_id="追加したいX의 ID（@なし）")
+@bot.tree.command(name="x_add", description="【管理者限定】監視するアカウントを追加するよ")
+@app_commands.describe(user_id="追加したいXのID（@なし）")
 @app_commands.checks.has_permissions(administrator=True)
 async def x_add(it: discord.Interaction, user_id: str):
     await it.response.defer(ephemeral=True)
@@ -90,14 +93,15 @@ async def x_add(it: discord.Interaction, user_id: str):
         msg = f"⚠️ @{user_id} はもうリストに入っているよ！"
     await it.followup.send(msg, ephemeral=True)
 
-@bot.tree.command(name="x_list", description="今監視しているアカウントを表示するよ")
+@bot.tree.command(name="x_list", description="【管理者限定】今監視しているアカウントを表示するよ")
+@app_commands.checks.has_permissions(administrator=True)
 async def x_list(it: discord.Interaction):
     if not bot.target_accounts:
         return await it.response.send_message("❌ 監視中のアカウントはないわにゃ。", ephemeral=True)
     account_list = "\n".join([f"・@{uid}" for uid in bot.target_accounts.keys()])
     await it.response.send_message(f"📋 **現在監視中のリストわにゃ:**\n{account_list}", ephemeral=True)
 
-@bot.tree.command(name="x_clear", description="監視リストを空にするよ")
+@bot.tree.command(name="x_clear", description="【管理者限定】監視リストを空にするよ")
 @app_commands.checks.has_permissions(administrator=True)
 async def x_clear(it: discord.Interaction):
     bot.target_accounts = {}
@@ -106,11 +110,14 @@ async def x_clear(it: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"Logged in: {bot.user.name}")
+    
+    # 起動メッセージを専用チャンネルに送信
     if not bot.booted:
-        channel = bot.get_channel(bot.target_channel_id)
+        channel = bot.get_channel(bot.boot_msg_channel_id)
         if channel:
             await channel.send("📢 **お知らせワドルディ、起動したわにゃ！**")
         bot.booted = True
+
     count = len(bot.target_accounts)
     activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count}人の最新ニュース")
     await bot.change_presence(activity=activity)
